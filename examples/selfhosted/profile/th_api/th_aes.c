@@ -1,11 +1,11 @@
 /*
  * Copyright (C) EEMBC(R). All Rights Reserved
- * 
+ *
  * All EEMBC Benchmark Software are products of EEMBC and are provided under the
  * terms of the EEMBC Benchmark License Agreements. The EEMBC Benchmark Software
  * are proprietary intellectual properties of EEMBC and its Members and is
- * protected under all applicable laws, including all applicable copyright laws.  
- * 
+ * protected under all applicable laws, including all applicable copyright laws.
+ *
  * If you received this EEMBC Benchmark Software without having a currently
  * effective EEMBC Benchmark License Agreement, you must discontinue use.
  */
@@ -15,6 +15,10 @@
 #include "mbedtls/ccm.h"
 
 #include "ee_aes.h"
+
+/* Issue #5: Workaround for v1 missing AES deinit */
+static bool g_needs_deinit = false;
+static aes_cipher_mode_t g_last_mode;
 
 /**
  * Create a context for use with the particular AES mode.
@@ -29,18 +33,18 @@ th_aes128_create(
 {
     if (mode == AES_ECB)
     {
-        *p_context = 
+        *p_context =
             (mbedtls_aes_context *)th_malloc(sizeof(mbedtls_aes_context));
     }
     else if (mode == AES_CCM)
     {
-        *p_context = 
+        *p_context =
             (mbedtls_ccm_context *)th_malloc(sizeof(mbedtls_ccm_context));
     }
     else
     {
         th_printf("e-[Unknown mode in th_aes128_create\r\n");
-        return EE_STATUS_ERROR;        
+        return EE_STATUS_ERROR;
     }
 
     if (*p_context == NULL)
@@ -73,9 +77,16 @@ th_aes128_init(
     mbedtls_ccm_context *p_ccm;
 
     keybits = keylen    * 8;
-    
+
+    /* Issue #5 */
+    if (g_needs_deinit)
+    {
+        th_aes128_deinit(p_context, g_last_mode);
+    }
+    g_last_mode = mode;
+
     if (mode == AES_ECB)
-    { 
+    {
         p_ecb = (mbedtls_aes_context *)p_context;
         mbedtls_aes_init(p_ecb);
         if (func == AES_ENC)
@@ -95,7 +106,7 @@ th_aes128_init(
                 th_printf("e-[Failed to set ECB DEC key: -0x%04x]\r\n", -ret);
                 return EE_STATUS_ERROR;
             }
-        } 
+        }
     }
     else if (mode == AES_CCM)
     {
@@ -132,6 +143,8 @@ th_aes128_deinit(
     if (mode == AES_CCM) {
         mbedtls_ccm_free((mbedtls_ccm_context *)p_context);
     }
+    /* Issue #5 */
+    g_needs_deinit = false;
 }
 
 /**
@@ -198,7 +211,7 @@ th_aes128_ccm_encrypt(
         p_ct,       // buffer holding the output data
         p_tag,      // buffer holding the tag
         taglen      // length of the tag to generate in bytes
-    ); 
+    );
 
     if (ret != 0)
     {
@@ -230,8 +243,8 @@ th_aes128_ccm_decrypt(
     int                  ret;
 
     ret = mbedtls_ccm_auth_decrypt(
-        p_ctx,      // CCM context 
-        ctlen,      // length of the input data, 
+        p_ctx,      // CCM context
+        ctlen,      // length of the input data,
         p_iv,       // nonce (initialization vector)
         ivlen,      // length of IV in bytes
         NULL,       // additional data
@@ -253,7 +266,7 @@ th_aes128_ccm_decrypt(
 
 /**
  * Clean up the context created.
- * 
+ *
  * Indicate the mode that was used for _create()
  */
 void
