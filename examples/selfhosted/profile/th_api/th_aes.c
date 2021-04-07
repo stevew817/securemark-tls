@@ -125,6 +125,8 @@ th_aes128_init(
         return EE_STATUS_ERROR;
     }
 
+    /* Issue #5 */
+    g_needs_deinit = true;
     return EE_STATUS_OK;
 }
 
