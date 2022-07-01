@@ -47,7 +47,7 @@
 #elif _WIN32
 #include <sys\timeb.h>
 #else
-#error "Operating system not recognized"
+#include "app.h"
 #endif
 
 /* Longest time to run each primitive during self-tuning */
@@ -97,7 +97,8 @@ th_timestamp(void)
     elapsedMicroSeconds
         = ((uint64_t)t.time) * 1000 * 1000 + ((uint64_t)t.millitm) * 1000;
 #else
-#error "Operating system not recognized"
+    uint32_t     elapsedMicroSeconds;
+    elapsedMicroSeconds = get_timestamp_us();
 #endif
     return elapsedMicroSeconds;
 }
@@ -462,7 +463,7 @@ tune_iterations(uint32_t n, wrapper_function_t *func)
     uint32_t mint  = 0;
     uint32_t dt1   = 0;
     uint32_t dt2   = 0;
-    uint64_t guess = 1;
+    uint32_t guess = 1;
     wres_t   res;
     /* This converges faster than previous method. */
     do
@@ -474,10 +475,11 @@ tune_iterations(uint32_t n, wrapper_function_t *func)
         dt2  = res.dt / 1e3;
         eps  = (dt1 > dt2) ? (dt1 - dt2) : (dt2 - dt1);
         mint = (dt1 < dt2) ? dt1 : dt2;
-    } while (eps > guess || dt1 < 100 || guess < MIN_ITER);
+        th_printf("eps = %ld, mint = %ld, guess = %ld\r\n", eps, mint, guess);
+    } while (/*eps > guess ||*/ mint < 100 || guess < MIN_ITER);
     /* Integer div will floor <10, so multiply by 10%, but before the division
        in order to add more precision to the integer divide). */
-    return (guess * 11000) / mint;
+    return (guess * 12000) / mint;
 }
 
 // We tune each function independently by using a table entry for each wrapper:
@@ -550,11 +552,11 @@ static task_entry_t g_task[] =
     // Additional ECDSA Sign & Hashes
     TASK(sha256               , 1539,  1.0f, 0xb48c)
     TASK(sha384               , 1539,  1.0f, 0x7cbc)
-    TASK(ecdsa_sign_ed25519   ,   32,  1.0f, 0)
+    //TASK(ecdsa_sign_ed25519   ,   32,  1.0f, 0)
     // Additional ECDSA Verify & Hashes
     TASK(sha256               , 4104,  2.0f, 0x39c9)
     TASK(sha384               , 4104,  2.0f, 0xa424)
-    TASK(ecdsa_verify_ed25519 ,   32,  1.0f, 1)
+    //TASK(ecdsa_verify_ed25519 ,   32,  1.0f, 1)
     // AEAD
     TASK(aes128_ccm_encrypt   ,  416,  1.0f, 0x286a)
     TASK(aes128_ccm_decrypt   ,  444,  1.0f, 0x4256)
@@ -591,15 +593,15 @@ static task_entry_t g_task[] =
     TASK(sha384               ,  176, 14.0f, 0x660b)
     TASK(sha384               ,  130,  2.0f, 0x445b)
     // Secure boot verify only
-    TASK(rsa_verify_2048      ,   32,  1.0f, 1)
-    TASK(rsa_verify_3072      ,   32,  1.0f, 1)
-    TASK(rsa_verify_4096      ,   32,  1.0f, 1)
+    //TASK(rsa_verify_2048      ,   32,  1.0f, 1)
+    //TASK(rsa_verify_3072      ,   32,  1.0f, 1)
+    //TASK(rsa_verify_4096      ,   32,  1.0f, 1)
 };
 // clang-format on
 static const size_t g_numtasks = sizeof(g_task) / sizeof(task_entry_t);
 
 int
-main(void)
+main_selfhosted(void)
 {
     size_t   i;
     uint64_t iterations;
