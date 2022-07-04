@@ -10,7 +10,7 @@
  * effective EEMBC Benchmark License Agreement, you must discontinue use.
  */
 
-#include <wolfssl/options.h>
+#include <wolfssl/wolfcrypt/settings.h>
 #include <wolfssl/version.h>
 #include <wolfssl/wolfcrypt/ecc.h>
 #include <wolfssl/wolfcrypt/ed25519.h>
@@ -65,12 +65,18 @@ th_ecdsa_create(void **pp_context, ee_ecdh_group_t group)
             CHK1(wc_ecc_init_ex(&(ctx->key.ecc), HEAP_HINT, DEVID));
             CHK1(wc_ecc_make_key(&(ctx->rng), 32, &(ctx->key.ecc)));
             CHK1(wc_ecc_set_deterministic(&(ctx->key.ecc), 1));
+        #ifdef ECC_TIMING_RESISTANT
+            wc_ecc_set_rng(&(ctx->key.ecc), &(ctx->rng));
+        #endif
             break;
         case EE_P384:
             ctx->curve = ECC_SECP384R1;
             CHK1(wc_ecc_init_ex(&(ctx->key.ecc), HEAP_HINT, DEVID));
             CHK1(wc_ecc_make_key(&(ctx->rng), 48, &(ctx->key.ecc)));
             CHK1(wc_ecc_set_deterministic(&(ctx->key.ecc), 1));
+        #ifdef ECC_TIMING_RESISTANT
+            wc_ecc_set_rng(&(ctx->key.ecc), &(ctx->rng));
+        #endif
             break;
         case EE_Ed25519:
             ctx->curve = ECC_X25519; /* [sic], should be C25519? */

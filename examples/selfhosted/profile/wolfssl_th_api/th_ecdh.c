@@ -10,7 +10,7 @@
  * effective EEMBC Benchmark License Agreement, you must discontinue use.
  */
 
-#include <wolfssl/options.h>
+#include <wolfssl/wolfcrypt/settings.h>
 #include <wolfssl/wolfcrypt/ecc.h>
 #include <wolfssl/wolfcrypt/curve25519.h>
 void ee_printmemline(uint8_t *, int, char *);
@@ -80,6 +80,9 @@ th_ecdh_create(void **pp_context, ee_ecdh_group_t group)
                 th_printf("e-[wc_ecc_make_key (p256): %d]\r\n", ret);
                 return EE_STATUS_ERROR;
             };
+        #ifdef ECC_TIMING_RESISTANT
+            wc_ecc_set_rng(&(ctx->key.ecc), &(ctx->rng));
+        #endif
             break;
         case EE_P384:
             ctx->curve = ECC_SECP384R1;
@@ -91,6 +94,9 @@ th_ecdh_create(void **pp_context, ee_ecdh_group_t group)
                 th_printf("e-[wc_ecc_make_key (p384): %d]\r\n", ret);
                 return EE_STATUS_ERROR;
             };
+        #ifdef ECC_TIMING_RESISTANT
+            wc_ecc_set_rng(&(ctx->key.ecc), &(ctx->rng));
+        #endif
             break;
         case EE_C25519:
             ctx->curve = ECC_X25519; /* [sic], should be C25519? */

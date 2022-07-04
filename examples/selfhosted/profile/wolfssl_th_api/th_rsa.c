@@ -11,7 +11,7 @@
  */
 
 #include "ee_rsa.h"
-#include <wolfssl/options.h>
+#include <wolfssl/wolfcrypt/settings.h>
 #include <wolfssl/wolfcrypt/asn.h>
 #include <wolfssl/wolfcrypt/rsa.h>
 
