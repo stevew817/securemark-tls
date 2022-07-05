@@ -80,7 +80,7 @@ ee_status_t th_ecdsa_create(void **pp_context, ee_ecdh_group_t group)
     status = psa_driver_wrapper_generate_key(
         p_our_key_attr,
         ((th_psa_ecdsa_t *)(*pp_context))->our_key_buffer,
-        sizeof(((th_psa_ecdsa_t *)(*pp_context))->our_key_buffer),
+        (psa_get_key_bits(p_our_key_attr) + 7) / 8,
         &((th_psa_ecdsa_t *)(*pp_context))->our_key_len);
     if (status != PSA_SUCCESS)
     {
