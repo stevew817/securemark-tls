@@ -11,6 +11,8 @@
  */
 
 #include "psa/crypto.h"
+#include "psa_crypto_core.h"
+#include "psa_crypto_driver_wrappers.h"
 
 #include "ee_sha.h"
 
@@ -64,7 +66,7 @@ ee_status_t
 th_sha_init(void *p_context)
 {
     th_psa_sha_context_t *ctx = (th_psa_sha_context_t*)p_context;
-    return psa_hash_setup(&ctx->ctx, ctx->alg) == PSA_SUCCESS ? EE_STATUS_OK : EE_STATUS_ERROR;
+    return psa_driver_wrapper_hash_setup(&ctx->ctx, ctx->alg) == PSA_SUCCESS ? EE_STATUS_OK : EE_STATUS_ERROR;
 }
 
 /**
@@ -76,7 +78,7 @@ ee_status_t
 th_sha_process(void *p_context, const uint8_t *p_in, uint_fast32_t len)
 {
     th_psa_sha_context_t *ctx = (th_psa_sha_context_t*)p_context;
-    return psa_hash_update(&ctx->ctx, p_in, len) == PSA_SUCCESS ? EE_STATUS_OK : EE_STATUS_ERROR;
+    return psa_driver_wrapper_hash_update(&ctx->ctx, p_in, len) == PSA_SUCCESS ? EE_STATUS_OK : EE_STATUS_ERROR;
 }
 
 /**
@@ -90,7 +92,7 @@ th_sha_done(void *p_context, uint8_t *p_result)
     th_psa_sha_context_t *ctx = (th_psa_sha_context_t*)p_context;
     size_t olen;
 
-    return psa_hash_finish(&ctx->ctx, p_result, 48, &olen) == PSA_SUCCESS ? EE_STATUS_OK : EE_STATUS_ERROR;
+    return psa_driver_wrapper_hash_finish(&ctx->ctx, p_result, 48, &olen) == PSA_SUCCESS ? EE_STATUS_OK : EE_STATUS_ERROR;
 }
 
 /**
@@ -101,6 +103,6 @@ th_sha_done(void *p_context, uint8_t *p_result)
 void
 th_sha_destroy(void *p_context)
 {
-    psa_hash_abort(&((th_psa_sha_context_t*)p_context)->ctx);
+    psa_driver_wrapper_hash_abort(&((th_psa_sha_context_t*)p_context)->ctx);
     th_free(p_context);
 }

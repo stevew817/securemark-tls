@@ -18,8 +18,12 @@
 #include "th_util.h"
 
 typedef struct {
-    mbedtls_svc_key_id_t our_key;
-    mbedtls_svc_key_id_t their_key;
+    psa_key_attributes_t our_key_attr;
+    psa_key_attributes_t their_key_attr;
+    uint8_t our_key_buffer[48];
+    size_t our_key_len;
+    uint8_t their_key_buffer[97];
+    size_t their_key_len;
 } th_psa_ecdsa_t;
 
 /**
@@ -32,6 +36,7 @@ typedef struct {
 ee_status_t th_ecdsa_create(void **pp_context, ee_ecdh_group_t group)
 {
     psa_status_t status;
+    size_t olen;
     *pp_context = (th_psa_ecdsa_t *)th_malloc(sizeof(th_psa_ecdsa_t));
 
     if (*pp_context == NULL)
@@ -41,29 +46,42 @@ ee_status_t th_ecdsa_create(void **pp_context, ee_ecdh_group_t group)
     }
 
     // Create a new key
-    psa_key_attributes_t key_attr = PSA_KEY_ATTRIBUTES_INIT;
+    ((th_psa_ecdsa_t *)(*pp_context))->our_key_attr = psa_key_attributes_init();
+    ((th_psa_ecdsa_t *)(*pp_context))->their_key_attr = psa_key_attributes_init();
+    psa_key_attributes_t *p_our_key_attr = &((th_psa_ecdsa_t *)(*pp_context))->our_key_attr;
+    psa_key_attributes_t *p_their_key_attr = &((th_psa_ecdsa_t *)(*pp_context))->their_key_attr;
 
     switch (group)
     {
         case EE_P256R1:
-            psa_set_key_bits(&key_attr, 256);
-            psa_set_key_type(&key_attr, PSA_KEY_TYPE_ECC_KEY_PAIR(PSA_ECC_FAMILY_SECP_R1));
+            psa_set_key_bits(p_our_key_attr, 256);
+            psa_set_key_type(p_our_key_attr, PSA_KEY_TYPE_ECC_KEY_PAIR(PSA_ECC_FAMILY_SECP_R1));
+            psa_set_key_bits(p_their_key_attr, 256);
+            psa_set_key_type(p_their_key_attr, PSA_KEY_TYPE_ECC_PUBLIC_KEY(PSA_ECC_FAMILY_SECP_R1));
             break;
         case EE_P384:
-            psa_set_key_bits(&key_attr, 384);
-            psa_set_key_type(&key_attr, PSA_KEY_TYPE_ECC_KEY_PAIR(PSA_ECC_FAMILY_SECP_R1));
+            psa_set_key_bits(p_our_key_attr, 384);
+            psa_set_key_type(p_our_key_attr, PSA_KEY_TYPE_ECC_KEY_PAIR(PSA_ECC_FAMILY_SECP_R1));
+            psa_set_key_bits(p_their_key_attr, 384);
+            psa_set_key_type(p_their_key_attr, PSA_KEY_TYPE_ECC_PUBLIC_KEY(PSA_ECC_FAMILY_SECP_R1));
             break;
         default:
             th_free(*pp_context);
             th_printf("e-[unknown ECC group in th_ecdsa_create]\r\n");
             return EE_STATUS_ERROR;
     }
-    psa_set_key_algorithm(&key_attr, PSA_ALG_ECDSA(PSA_ALG_ANY_HASH));
-    psa_set_key_usage_flags(&key_attr, PSA_KEY_USAGE_SIGN_HASH | PSA_KEY_USAGE_VERIFY_HASH);
 
-    ((th_psa_ecdsa_t *)(*pp_context))->our_key = 0;
-    ((th_psa_ecdsa_t *)(*pp_context))->their_key = 0;
-    status = psa_generate_key(&key_attr, &((th_psa_ecdsa_t *)(*pp_context))->our_key);
+    psa_set_key_algorithm(p_our_key_attr, PSA_ALG_ECDSA(PSA_ALG_ANY_HASH));
+    psa_set_key_usage_flags(p_our_key_attr, PSA_KEY_USAGE_SIGN_HASH | PSA_KEY_USAGE_VERIFY_HASH);
+
+    psa_set_key_algorithm(p_their_key_attr, PSA_ALG_ECDSA(PSA_ALG_ANY_HASH));
+    psa_set_key_usage_flags(p_their_key_attr, PSA_KEY_USAGE_VERIFY_HASH);
+
+    status = psa_driver_wrapper_generate_key(
+        p_our_key_attr,
+        ((th_psa_ecdsa_t *)(*pp_context))->our_key_buffer,
+        sizeof(((th_psa_ecdsa_t *)(*pp_context))->our_key_buffer),
+        &((th_psa_ecdsa_t *)(*pp_context))->our_key_len);
     if (status != PSA_SUCCESS)
     {
         th_free(*pp_context);
@@ -81,10 +99,8 @@ ee_status_t th_ecdsa_create(void **pp_context, ee_ecdh_group_t group)
  */
 void th_ecdsa_destroy(void *p_context)
 {
-    psa_destroy_key(((th_psa_ecdsa_t *)(p_context))->our_key);
-    psa_destroy_key(((th_psa_ecdsa_t *)(p_context))->their_key);
-    ((th_psa_ecdsa_t *)(p_context))->our_key = 0;
-    ((th_psa_ecdsa_t *)(p_context))->their_key = 0;
+    psa_reset_key_attributes(&((th_psa_ecdsa_t *)(p_context))->our_key_attr);
+    psa_reset_key_attributes(&((th_psa_ecdsa_t *)(p_context))->their_key_attr);
     th_free(p_context);
 }
 
@@ -104,11 +120,13 @@ ee_status_t th_ecdsa_get_public_key(void *         p_context,
     psa_status_t            status;
     size_t                  olen;
 
-    status = psa_export_public_key(ctx->our_key, p_out, *p_outlen, &olen);
+    status = psa_driver_wrapper_export_public_key(
+                &ctx->our_key_attr, ctx->our_key_buffer, ctx->our_key_len,
+                p_out, *p_outlen, &olen);
 
-    if (status != 0)
+    if (status != PSA_SUCCESS)
     {
-        th_printf("e-[psa_export_public_key: %ld]\r\n", status);
+        th_printf("e-[psa_driver_wrapper_export_public_key: %ld]\r\n", status);
         return EE_STATUS_ERROR;
     }
 
@@ -132,34 +150,15 @@ ee_status_t th_ecdsa_set_public_key(void *        p_context,
                                     uint_fast32_t publen)
 {
     th_psa_ecdsa_t *ctx =   (th_psa_ecdsa_t*)p_context;
-    psa_status_t            status;
 
-    if (ctx->their_key != 0)
+    if (sizeof(ctx->their_key_buffer) < publen)
     {
-        psa_destroy_key(ctx->their_key);
-        ctx->their_key = 0;
-    }
-
-    psa_key_attributes_t key_attr_ours = PSA_KEY_ATTRIBUTES_INIT;
-    psa_key_attributes_t key_attr_theirs = PSA_KEY_ATTRIBUTES_INIT;
-    status = psa_get_key_attributes(ctx->our_key, &key_attr_ours);
-    if (status != 0)
-    {
-        th_printf("e-[psa_get_key_attributes: %ld]\r\n", status);
+        th_printf("e-[Public key length larger than buffer in th_ecdsa_set_public_key]\r\n");
         return EE_STATUS_ERROR;
     }
 
-    psa_set_key_algorithm(&key_attr_theirs, psa_get_key_algorithm(&key_attr_ours));
-    psa_set_key_bits(&key_attr_theirs, psa_get_key_bits(&key_attr_ours));
-    psa_set_key_type(&key_attr_theirs, PSA_KEY_TYPE_PUBLIC_KEY_OF_KEY_PAIR(psa_get_key_type(&key_attr_ours)));
-    psa_set_key_usage_flags(&key_attr_theirs, PSA_KEY_USAGE_VERIFY_HASH);
-
-    status = psa_import_key(&key_attr_theirs, p_pub, publen, &ctx->their_key);
-    if (status != 0)
-    {
-        th_printf("e-[psa_import_key: %ld]\r\n", status);
-        return EE_STATUS_ERROR;
-    }
+    th_memcpy(ctx->their_key_buffer, p_pub, publen);
+    ctx->their_key_len = publen;
 
     return EE_STATUS_OK;
 }
@@ -211,13 +210,14 @@ ee_status_t th_ecdsa_sign(void *         p_context,
             return EE_STATUS_ERROR;
     }
 
-    status = psa_sign_hash(ctx->our_key,
-                           PSA_ALG_ECDSA(md_alg),
-                           p_msg, msglen,
-                           p_sig, *p_siglen, &olen);
-    if (status != 0)
+    status = psa_driver_wrapper_sign_hash(
+                &ctx->our_key_attr, ctx->our_key_buffer, ctx->our_key_len,
+                PSA_ALG_ECDSA(md_alg),
+                p_msg, msglen,
+                p_sig, *p_siglen, &olen);
+    if (status != PSA_SUCCESS)
     {
-        th_printf("e-[psa_sign_hash: %ld]\r\n", status);
+        th_printf("e-[psa_driver_wrapper_sign_hash: %ld]\r\n", status);
         return EE_STATUS_ERROR;
     }
 
@@ -281,7 +281,6 @@ ee_status_t th_ecdsa_verify(void *        p_context,
     psa_status_t            status;
     psa_algorithm_t         md_alg;
     uint8_t                 rs_buffer[96];
-    mbedtls_svc_key_id_t    key_id = ctx->their_key > 0 ? ctx->their_key : ctx->our_key;
 
     switch (msglen)
     {
@@ -299,16 +298,8 @@ ee_status_t th_ecdsa_verify(void *        p_context,
             return EE_STATUS_ERROR;
     }
 
-    psa_key_attributes_t key_attr = PSA_KEY_ATTRIBUTES_INIT;
-    status = psa_get_key_attributes(key_id, &key_attr);
-    if (status != 0)
-    {
-        th_printf("e-[psa_get_key_attributes: %ld]\r\n", status);
-        return EE_STATUS_ERROR;
-    }
-
     // Manually extract PSA-expected format from ASN.1 (todo: skip for Ed25519)
-    size_t rs_len = psa_get_key_bits(&key_attr) / 8;
+    size_t rs_len = psa_get_key_bits(&ctx->their_key_attr) / 8;
     size_t r_len = p_sig[3];
 
     if (r_len > rs_len)
@@ -334,12 +325,17 @@ ee_status_t th_ecdsa_verify(void *        p_context,
     }
 
     // Do PSA signature check
-    status = psa_verify_hash(key_id,
-                             PSA_ALG_ECDSA(md_alg),
-                             p_msg,
-                             msglen,
-                             rs_buffer,
-                             rs_len * 2);
+    status = psa_driver_wrapper_verify_hash(
+                &ctx->their_key_attr, ctx->their_key_buffer, ctx->their_key_len,
+                PSA_ALG_ECDSA(md_alg),
+                p_msg, msglen,
+                rs_buffer, rs_len * 2);
+
+    if (status != PSA_SUCCESS)
+    {
+        th_printf("e-[psa_driver_wrapper_sign_hash: %ld]\r\n", status);
+        return EE_STATUS_ERROR;
+    }
 
     return EE_STATUS_OK;
 }

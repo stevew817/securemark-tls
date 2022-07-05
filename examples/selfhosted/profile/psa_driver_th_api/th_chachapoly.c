@@ -15,6 +15,18 @@
 #include "psa_crypto_driver_wrappers.h"
 #include "ee_chachapoly.h"
 
+#if defined(MBEDTLS_PSA_ACCEL_ALG_CHACHA20_POLY1305)
+#include "em_device.h"
+#if defined(SEMAILBOX_PRESENT)
+  #include "sl_se_manager.h"
+  #include "sli_se_transparent_functions.h"
+  #include "sli_se_driver_aead.h"
+
+  #define TRANSPARENT_AEAD_ENCRYPT_TAG sli_se_driver_aead_encrypt_tag
+  #define TRANSPARENT_AEAD_DECRYPT_TAG sli_se_driver_aead_decrypt_tag
+#endif
+#endif
+
 typedef struct {
     psa_key_attributes_t key_attr;
     uint8_t key_buffer[32];
@@ -67,6 +79,11 @@ th_chachapoly_init(void *            p_context, // input: portable context
     psa_set_key_type(&ctx->key_attr, PSA_KEY_TYPE_CHACHA20);
     psa_set_key_bits(&ctx->key_attr, keylen * 8);
     psa_set_key_algorithm(&ctx->key_attr, PSA_ALG_CHACHA20_POLY1305);
+    psa_set_key_usage_flags(&ctx->key_attr,
+                            PSA_KEY_USAGE_ENCRYPT |
+                            PSA_KEY_USAGE_DECRYPT |
+                            PSA_KEY_USAGE_SIGN_MESSAGE |
+                            PSA_KEY_USAGE_VERIFY_MESSAGE);
 
     th_memcpy(ctx->key_buffer, p_key, keylen);
     ctx->key_len = keylen;
@@ -102,6 +119,18 @@ th_chachapoly_encrypt(
     th_psa_chachapoly_context_t *ctx = (th_psa_chachapoly_context_t*)p_context;
     size_t olen;
 
+#if defined(TRANSPARENT_AEAD_ENCRYPT_TAG)
+    size_t tlen;
+
+    psa_status_t status = TRANSPARENT_AEAD_ENCRYPT_TAG(
+               &ctx->key_attr, ctx->key_buffer, ctx->key_len,
+               PSA_ALG_CHACHA20_POLY1305,
+               p_iv, ivlen,
+               NULL, 0,
+               p_pt, ptlen,
+               p_ct, ptlen, &olen,
+               p_tag, taglen, &tlen);
+#else
     psa_status_t status = psa_driver_wrapper_aead_encrypt(
                &ctx->key_attr, ctx->key_buffer, ctx->key_len,
                PSA_ALG_CHACHA20_POLY1305,
@@ -109,6 +138,7 @@ th_chachapoly_encrypt(
                NULL, 0,
                p_pt, ptlen,
                p_ct, ptlen + taglen, &olen);
+#endif
     if (status != PSA_SUCCESS)
     {
         th_printf("e-[psa_driver_wrapper_aead_encrypt: %ld]\r\n", status);
@@ -138,6 +168,16 @@ th_chachapoly_decrypt(
     th_psa_chachapoly_context_t *ctx = (th_psa_chachapoly_context_t*)p_context;
     size_t olen;
 
+#if defined(TRANSPARENT_AEAD_DECRYPT_TAG)
+    psa_status_t status = TRANSPARENT_AEAD_DECRYPT_TAG(
+               &ctx->key_attr, ctx->key_buffer, ctx->key_len,
+               PSA_ALG_CHACHA20_POLY1305,
+               p_iv, ivlen,
+               NULL, 0,
+               p_ct, ctlen,
+               p_tag, taglen,
+               p_pt, ctlen, &olen);
+#else
     uint8_t* tmp_buf = (uint8_t*)th_malloc(ctlen + taglen);
     if (tmp_buf == NULL)
     {
@@ -156,6 +196,8 @@ th_chachapoly_decrypt(
                tmp_buf, ctlen + taglen,
                p_pt, ctlen, &olen);
     th_free(tmp_buf);
+#endif
+
     if (status != PSA_SUCCESS)
     {
         th_printf("e-[psa_driver_wrapper_aead_decrypt: %ld]\r\n", status);

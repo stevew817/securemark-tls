@@ -10,6 +10,8 @@
  * effective EEMBC Benchmark License Agreement, you must discontinue use.
  */
 #include "psa/crypto.h"
+#include "psa_crypto_core.h"
+#include "psa_crypto_driver_wrappers.h"
 
 #include "ee_ecdh.h"
 

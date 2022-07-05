@@ -15,6 +15,30 @@
 #include "psa_crypto_driver_wrappers.h"
 #include "ee_aes.h"
 
+#include "em_device.h"
+#if defined(SEMAILBOX_PRESENT)
+  #include "sl_se_manager.h"
+  #include "sli_se_transparent_functions.h"
+  #include "sli_se_driver_aead.h"
+
+  #define TRANSPARENT_AEAD_ENCRYPT_TAG sli_se_driver_aead_encrypt_tag
+  #define TRANSPARENT_AEAD_DECRYPT_TAG sli_se_driver_aead_decrypt_tag
+#elif defined(CRYPTOACC_PRESENT)
+  #include "sl_se_manager.h"
+  #include "sli_cryptoacc_transparent_functions.h"
+
+  #define TRANSPARENT_AEAD_ENCRYPT_TAG sli_cryptoacc_transparent_aead_encrypt_tag
+  #define TRANSPARENT_AEAD_DECRYPT_TAG sli_cryptoacc_transparent_aead_decrypt_tag
+#elif defined(CRYPTO_PRESENT)
+  #include "sli_crypto_transparent_functions.h"
+
+  #define TRANSPARENT_AEAD_ENCRYPT_TAG sli_crypto_transparent_aead_encrypt_tag
+  #define TRANSPARENT_AEAD_DECRYPT_TAG sli_crypto_transparent_aead_decrypt_tag
+#else
+  #error "No known implementation for AEAD"
+#endif
+
+
 typedef struct {
     ee_aes_mode_t aes_mode;
     psa_key_attributes_t key_attr;
@@ -302,6 +326,18 @@ th_aes_ccm_encrypt(
     th_psa_aes_context_t *ctx = (th_psa_aes_context_t*)p_context;
     size_t olen;
 
+#if defined(TRANSPARENT_AEAD_ENCRYPT_TAG)
+    size_t tlen;
+
+    psa_status_t status = TRANSPARENT_AEAD_ENCRYPT_TAG(
+               &ctx->key_attr, ctx->key_buffer, ctx->key_len,
+               PSA_ALG_CCM,
+               p_iv, ivlen,
+               NULL, 0,
+               p_pt, ptlen,
+               p_ct, ptlen, &olen,
+               p_tag, taglen, &tlen);
+#else
     psa_status_t status = psa_driver_wrapper_aead_encrypt(
                &ctx->key_attr, ctx->key_buffer, ctx->key_len,
                PSA_ALG_CCM,
@@ -309,6 +345,8 @@ th_aes_ccm_encrypt(
                NULL, 0,
                p_pt, ptlen,
                p_ct, ptlen + taglen, &olen);
+#endif
+
     if (status != PSA_SUCCESS)
     {
         th_printf("e-[psa_driver_wrapper_aead_encrypt: %ld]\r\n", status);
@@ -338,6 +376,16 @@ th_aes_ccm_decrypt(
     th_psa_aes_context_t *ctx = (th_psa_aes_context_t*)p_context;
     size_t olen;
 
+#if defined(TRANSPARENT_AEAD_DECRYPT_TAG)
+    psa_status_t status = TRANSPARENT_AEAD_DECRYPT_TAG(
+               &ctx->key_attr, ctx->key_buffer, ctx->key_len,
+               PSA_ALG_CCM,
+               p_iv, ivlen,
+               NULL, 0,
+               p_ct, ctlen,
+               p_tag, taglen,
+               p_pt, ctlen, &olen);
+#else
     uint8_t* tmp_buf = (uint8_t*)th_malloc(ctlen + taglen);
     if (tmp_buf == NULL)
     {
@@ -356,6 +404,8 @@ th_aes_ccm_decrypt(
                tmp_buf, ctlen + taglen,
                p_pt, ctlen, &olen);
     th_free(tmp_buf);
+#endif
+
     if (status != PSA_SUCCESS)
     {
         th_printf("e-[psa_driver_wrapper_aead_decrypt: %ld]\r\n", status);
@@ -385,6 +435,18 @@ th_aes_gcm_encrypt(
     th_psa_aes_context_t *ctx = (th_psa_aes_context_t*)p_context;
     size_t olen;
 
+#if defined(TRANSPARENT_AEAD_ENCRYPT_TAG)
+    size_t tlen;
+
+    psa_status_t status = TRANSPARENT_AEAD_ENCRYPT_TAG(
+               &ctx->key_attr, ctx->key_buffer, ctx->key_len,
+               PSA_ALG_GCM,
+               p_iv, ivlen,
+               NULL, 0,
+               p_pt, ptlen,
+               p_ct, ptlen, &olen,
+               p_tag, taglen, &tlen);
+#else
     psa_status_t status = psa_driver_wrapper_aead_encrypt(
                &ctx->key_attr, ctx->key_buffer, ctx->key_len,
                PSA_ALG_GCM,
@@ -392,6 +454,8 @@ th_aes_gcm_encrypt(
                NULL, 0,
                p_pt, ptlen,
                p_ct, ptlen + taglen, &olen);
+#endif
+
     if (status != PSA_SUCCESS)
     {
         th_printf("e-[psa_driver_wrapper_aead_encrypt: %ld]\r\n", status);
@@ -421,6 +485,16 @@ th_aes_gcm_decrypt(
     th_psa_aes_context_t *ctx = (th_psa_aes_context_t*)p_context;
     size_t olen;
 
+#if defined(TRANSPARENT_AEAD_DECRYPT_TAG)
+    psa_status_t status = TRANSPARENT_AEAD_DECRYPT_TAG(
+               &ctx->key_attr, ctx->key_buffer, ctx->key_len,
+               PSA_ALG_GCM,
+               p_iv, ivlen,
+               NULL, 0,
+               p_ct, ctlen,
+               p_tag, taglen,
+               p_pt, ctlen, &olen);
+#else
     uint8_t* tmp_buf = (uint8_t*)th_malloc(ctlen + taglen);
     if (tmp_buf == NULL)
     {
@@ -439,6 +513,8 @@ th_aes_gcm_decrypt(
                tmp_buf, ctlen + taglen,
                p_pt, ctlen, &olen);
     th_free(tmp_buf);
+#endif
+
     if (status != PSA_SUCCESS)
     {
         th_printf("e-[psa_driver_wrapper_aead_decrypt: %ld]\r\n", status);
