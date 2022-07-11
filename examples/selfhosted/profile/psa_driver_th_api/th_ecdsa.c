@@ -56,14 +56,26 @@ ee_status_t th_ecdsa_create(void **pp_context, ee_ecdh_group_t group)
         case EE_P256R1:
             psa_set_key_bits(p_our_key_attr, 256);
             psa_set_key_type(p_our_key_attr, PSA_KEY_TYPE_ECC_KEY_PAIR(PSA_ECC_FAMILY_SECP_R1));
+            psa_set_key_algorithm(p_our_key_attr, PSA_ALG_ECDSA(PSA_ALG_ANY_HASH));
             psa_set_key_bits(p_their_key_attr, 256);
             psa_set_key_type(p_their_key_attr, PSA_KEY_TYPE_ECC_PUBLIC_KEY(PSA_ECC_FAMILY_SECP_R1));
+            psa_set_key_algorithm(p_their_key_attr, PSA_ALG_ECDSA(PSA_ALG_ANY_HASH));
             break;
         case EE_P384:
             psa_set_key_bits(p_our_key_attr, 384);
             psa_set_key_type(p_our_key_attr, PSA_KEY_TYPE_ECC_KEY_PAIR(PSA_ECC_FAMILY_SECP_R1));
+            psa_set_key_algorithm(p_our_key_attr, PSA_ALG_ECDSA(PSA_ALG_ANY_HASH));
             psa_set_key_bits(p_their_key_attr, 384);
             psa_set_key_type(p_their_key_attr, PSA_KEY_TYPE_ECC_PUBLIC_KEY(PSA_ECC_FAMILY_SECP_R1));
+            psa_set_key_algorithm(p_their_key_attr, PSA_ALG_ECDSA(PSA_ALG_ANY_HASH));
+            break;
+        case EE_Ed25519:
+            psa_set_key_bits(p_our_key_attr, 255);
+            psa_set_key_type(p_our_key_attr, PSA_KEY_TYPE_ECC_KEY_PAIR(PSA_ECC_FAMILY_TWISTED_EDWARDS));
+            psa_set_key_algorithm(p_our_key_attr, PSA_ALG_PURE_EDDSA);
+            psa_set_key_bits(p_their_key_attr, 255);
+            psa_set_key_type(p_their_key_attr, PSA_KEY_TYPE_ECC_PUBLIC_KEY(PSA_ECC_FAMILY_TWISTED_EDWARDS));
+            psa_set_key_algorithm(p_their_key_attr, PSA_ALG_PURE_EDDSA);
             break;
         default:
             th_free(*pp_context);
@@ -71,10 +83,7 @@ ee_status_t th_ecdsa_create(void **pp_context, ee_ecdh_group_t group)
             return EE_STATUS_ERROR;
     }
 
-    psa_set_key_algorithm(p_our_key_attr, PSA_ALG_ECDSA(PSA_ALG_ANY_HASH));
     psa_set_key_usage_flags(p_our_key_attr, PSA_KEY_USAGE_SIGN_HASH | PSA_KEY_USAGE_VERIFY_HASH);
-
-    psa_set_key_algorithm(p_their_key_attr, PSA_ALG_ECDSA(PSA_ALG_ANY_HASH));
     psa_set_key_usage_flags(p_their_key_attr, PSA_KEY_USAGE_VERIFY_HASH);
 
     status = psa_driver_wrapper_generate_key(
@@ -82,10 +91,11 @@ ee_status_t th_ecdsa_create(void **pp_context, ee_ecdh_group_t group)
         ((th_psa_ecdsa_t *)(*pp_context))->our_key_buffer,
         (psa_get_key_bits(p_our_key_attr) + 7) / 8,
         &((th_psa_ecdsa_t *)(*pp_context))->our_key_len);
+
     if (status != PSA_SUCCESS)
     {
         th_free(*pp_context);
-        th_printf("e-[cannot create key in th_ecdsa_create]\r\n");
+        th_printf("e-[cannot create key in th_ecdsa_create: %ld]\r\n", status);
         return EE_STATUS_ERROR;
     }
 
@@ -192,67 +202,92 @@ ee_status_t th_ecdsa_sign(void *         p_context,
     th_psa_ecdsa_t *ctx =   (th_psa_ecdsa_t*)p_context;
     psa_status_t            status;
     size_t                  olen;
-    psa_algorithm_t         md_alg;
 
-    switch (msglen)
+
+    if (psa_get_key_algorithm(&ctx->our_key_attr) == PSA_ALG_PURE_EDDSA)
     {
-        case 32:
-            md_alg = PSA_ALG_SHA_256;
-            break;
-        case 48:
-            md_alg = PSA_ALG_SHA_384;
-            break;
-        case 64:
-            md_alg = PSA_ALG_SHA_512;
-            break;
-        default:
-            th_printf("e-[Unknown hash length in th_ecdsa_sign]\r\n");
+        status = psa_driver_wrapper_sign_message(
+                    &ctx->our_key_attr, ctx->our_key_buffer, ctx->our_key_len,
+                    psa_get_key_algorithm(&ctx->our_key_attr),
+                    p_msg, msglen,
+                    p_sig, *p_siglen, &olen);
+
+        if (status != PSA_SUCCESS)
+        {
+            th_printf("e-[psa_driver_wrapper_sign_message: %ld]\r\n", status);
             return EE_STATUS_ERROR;
-    }
-
-    status = psa_driver_wrapper_sign_hash(
-                &ctx->our_key_attr, ctx->our_key_buffer, ctx->our_key_len,
-                PSA_ALG_ECDSA(md_alg),
-                p_msg, msglen,
-                p_sig, *p_siglen, &olen);
-    if (status != PSA_SUCCESS)
-    {
-        th_printf("e-[psa_driver_wrapper_sign_hash: %ld]\r\n", status);
-        return EE_STATUS_ERROR;
-    }
-
-    // Manually do ASN.1 encoding (todo: skip for Ed25519)
-    size_t rs_len = olen / 2;
-    bool is_r_large = p_sig[0] >= 0x80;
-    bool is_s_large = p_sig[rs_len] >= 0x80;
-
-    size_t r_offset = 4 + (is_r_large ? 1 : 0);
-    size_t s_offset = r_offset + rs_len + 2 + (is_s_large ? 1 : 0);
-
-    th_memmove(&p_sig[s_offset], &p_sig[rs_len], rs_len);
-    th_memmove(&p_sig[r_offset], p_sig, rs_len);
-    p_sig[0] = 0x30;
-    p_sig[1] = olen + 4 + (is_r_large ? 1 : 0) + (is_s_large ? 1 : 0);
-    p_sig[2] = 0x02;
-    p_sig[3] = rs_len + (is_r_large ? 1 : 0);
-    if (is_r_large)
-    {
-        p_sig[4] = 0x0;
-    }
-
-    if (is_s_large)
-    {
-        p_sig[s_offset - 1] = 0x0;
-        p_sig[s_offset - 2] = rs_len + (is_s_large ? 1 : 0);
-        p_sig[s_offset - 3] = 0x02;
+        }
     }
     else
     {
-        p_sig[s_offset - 1] = rs_len + (is_s_large ? 1 : 0);
-        p_sig[s_offset - 2] = 0x02;
+        psa_algorithm_t     sig_alg;
+        size_t              rs_len;
+        size_t              r_offset, s_offset;
+        bool                is_r_large, is_s_large;
+
+        switch (msglen)
+        {
+            case 32:
+                sig_alg = PSA_ALG_ECDSA(PSA_ALG_SHA_256);
+                break;
+            case 48:
+                sig_alg = PSA_ALG_ECDSA(PSA_ALG_SHA_384);
+                break;
+            case 64:
+                sig_alg = PSA_ALG_ECDSA(PSA_ALG_SHA_512);
+                break;
+            default:
+                th_printf("e-[Unknown hash length in th_ecdsa_sign]\r\n");
+                return EE_STATUS_ERROR;
+        }
+
+        status = psa_driver_wrapper_sign_hash(
+                    &ctx->our_key_attr, ctx->our_key_buffer, ctx->our_key_len,
+                    sig_alg,
+                    p_msg, msglen,
+                    p_sig, *p_siglen, &olen);
+
+        if (status != PSA_SUCCESS)
+        {
+            th_printf("e-[psa_driver_wrapper_sign_hash: %ld]\r\n", status);
+            return EE_STATUS_ERROR;
+        }
+
+        // Manually do ASN.1 encoding for Weierstrass keys
+        rs_len = olen / 2;
+        is_r_large = p_sig[0] >= 0x80;
+        is_s_large = p_sig[rs_len] >= 0x80;
+
+        r_offset = 4 + (is_r_large ? 1 : 0);
+        s_offset = r_offset + rs_len + 2 + (is_s_large ? 1 : 0);
+
+        th_memmove(&p_sig[s_offset], &p_sig[rs_len], rs_len);
+        th_memmove(&p_sig[r_offset], p_sig, rs_len);
+        p_sig[0] = 0x30;
+        p_sig[1] = olen + 4 + (is_r_large ? 1 : 0) + (is_s_large ? 1 : 0);
+        p_sig[2] = 0x02;
+        p_sig[3] = rs_len + (is_r_large ? 1 : 0);
+        if (is_r_large)
+        {
+            // ASN1 requires leading zero byte if MSbit of integer is 1
+            p_sig[4] = 0x0;
+        }
+
+        if (is_s_large)
+        {
+            p_sig[s_offset - 1] = 0x0;
+            p_sig[s_offset - 2] = rs_len + (is_s_large ? 1 : 0);
+            p_sig[s_offset - 3] = 0x02;
+        }
+        else
+        {
+            p_sig[s_offset - 1] = rs_len + (is_s_large ? 1 : 0);
+            p_sig[s_offset - 2] = 0x02;
+        }
+
+        *p_siglen = s_offset + rs_len;
     }
 
-    *p_siglen = s_offset + rs_len;
     return EE_STATUS_OK;
 }
 
@@ -279,62 +314,83 @@ ee_status_t th_ecdsa_verify(void *        p_context,
 {
     th_psa_ecdsa_t *ctx =   (th_psa_ecdsa_t*)p_context;
     psa_status_t            status;
-    psa_algorithm_t         md_alg;
-    uint8_t                 rs_buffer[96];
 
-    switch (msglen)
+    if (psa_get_key_algorithm(&ctx->our_key_attr) == PSA_ALG_PURE_EDDSA)
     {
-        case 32:
-            md_alg = PSA_ALG_SHA_256;
-            break;
-        case 48:
-            md_alg = PSA_ALG_SHA_384;
-            break;
-        case 64:
-            md_alg = PSA_ALG_SHA_512;
-            break;
-        default:
-            th_printf("e-[Unknown hash length in th_ecdsa_sign]\r\n");
+        status = psa_driver_wrapper_verify_message(
+                    &ctx->their_key_attr, ctx->their_key_buffer, ctx->their_key_len,
+                    psa_get_key_algorithm(&ctx->our_key_attr),
+                    p_msg, msglen,
+                    p_sig, siglen);
+
+        if (status != PSA_SUCCESS)
+        {
+            th_printf("e-[psa_driver_wrapper_verify_message: %ld]\r\n", status);
             return EE_STATUS_ERROR;
-    }
-
-    // Manually extract PSA-expected format from ASN.1 (todo: skip for Ed25519)
-    size_t rs_len = psa_get_key_bits(&ctx->their_key_attr) / 8;
-    size_t r_len = p_sig[3];
-
-    if (r_len > rs_len)
-    {
-        th_memcpy(rs_buffer, &p_sig[4 + r_len - rs_len], rs_len);
+        }
     }
     else
     {
-        th_memcpy(&rs_buffer[rs_len - r_len], &p_sig[4], r_len);
-        th_memset(rs_buffer, 0, rs_len - r_len);
-    }
+        psa_algorithm_t sig_alg;
 
-    size_t s_len = p_sig[4 + r_len + 1];
+        // Manually extract PSA-expected format from ASN.1
+        size_t          rs_len = (psa_get_key_bits(&ctx->our_key_attr) + 7) / 8;
+        size_t          r_len = p_sig[3];
+        uint8_t         rs_buffer[96];
 
-    if (s_len > rs_len)
-    {
-        th_memcpy(&rs_buffer[rs_len], &p_sig[4 + r_len + 2 + s_len - rs_len], rs_len);
-    }
-    else
-    {
-        th_memcpy(&rs_buffer[(rs_len * 2) - s_len], &p_sig[4 + r_len + 2], s_len);
-        th_memset(&rs_buffer[rs_len], 0, rs_len - s_len);
-    }
+        switch (msglen)
+        {
+            case 32:
+                sig_alg = PSA_ALG_ECDSA(PSA_ALG_SHA_256);
+                break;
+            case 48:
+                sig_alg = PSA_ALG_ECDSA(PSA_ALG_SHA_384);
+                break;
+            case 64:
+                sig_alg = PSA_ALG_ECDSA(PSA_ALG_SHA_512);
+                break;
+            default:
+                th_printf("e-[Unknown hash length in th_ecdsa_verify]\r\n");
+                return EE_STATUS_ERROR;
+        }
 
-    // Do PSA signature check
-    status = psa_driver_wrapper_verify_hash(
-                &ctx->their_key_attr, ctx->their_key_buffer, ctx->their_key_len,
-                PSA_ALG_ECDSA(md_alg),
-                p_msg, msglen,
-                rs_buffer, rs_len * 2);
+        if (r_len > rs_len)
+        {
+            // Copy the rightmost rs_len bytes from the ASN integer into our buffer
+            th_memcpy(rs_buffer, &p_sig[4 + r_len - rs_len], rs_len);
+        }
+        else
+        {
+            // Copy all bytes from the ASN integer into our buffer, right-aligned
+            th_memcpy(&rs_buffer[rs_len - r_len], &p_sig[4], r_len);
+            // And zero-extend
+            th_memset(rs_buffer, 0, rs_len - r_len);
+        }
 
-    if (status != PSA_SUCCESS)
-    {
-        th_printf("e-[psa_driver_wrapper_sign_hash: %ld]\r\n", status);
-        return EE_STATUS_ERROR;
+        size_t s_len = p_sig[4 + r_len + 1];
+
+        if (s_len > rs_len)
+        {
+            th_memcpy(&rs_buffer[rs_len], &p_sig[4 + r_len + 2 + s_len - rs_len], rs_len);
+        }
+        else
+        {
+            th_memcpy(&rs_buffer[(rs_len * 2) - s_len], &p_sig[4 + r_len + 2], s_len);
+            th_memset(&rs_buffer[rs_len], 0, rs_len - s_len);
+        }
+
+        // Do PSA signature check
+        status = psa_driver_wrapper_verify_hash(
+                    &ctx->their_key_attr, ctx->their_key_buffer, ctx->their_key_len,
+                    sig_alg,
+                    p_msg, msglen,
+                    rs_buffer, rs_len * 2);
+
+        if (status != PSA_SUCCESS)
+        {
+            th_printf("e-[psa_driver_wrapper_verify_hash: %ld]\r\n", status);
+            return EE_STATUS_ERROR;
+        }
     }
 
     return EE_STATUS_OK;
